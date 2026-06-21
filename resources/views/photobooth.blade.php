@@ -96,9 +96,11 @@ canvas{width:100%;max-width:310px;border-radius:8px;box-shadow:0 16px 48px rgba(
 .tipn svg{width:14px;height:14px;stroke:var(--gold);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tipt{font-size:12px;color:var(--muted);line-height:1.5}
 .tipt strong{color:var(--text);font-weight:600;display:block;margin-bottom:2px}
-.camwrap{background:var(--s1);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden}
-.vwrap{position:relative;background:#000;min-height:460px}
-video{width:100%;height:460px;object-fit:cover;display:block;transform:scaleX(-1)}
+.camwrap{background:var(--s1);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;min-width:0}
+.vwrap{position:relative;background:#000;min-height:460px;overflow:hidden}
+video{width:100%;height:460px;object-fit:cover;display:block;transform:scaleX(-1);background:#000}
+/* Saat kamera belum aktif, tampilkan placeholder hitam */
+video:not([srcObject]) { background: var(--s2); }
 .fcorner{position:absolute;width:24px;height:24px;border-color:var(--gold);border-style:solid;border-width:0;opacity:.75}
 .fcorner.tl{top:14px;left:14px;border-top-width:2px;border-left-width:2px}
 .fcorner.tr{top:14px;right:14px;border-top-width:2px;border-right-width:2px}
@@ -541,19 +543,50 @@ function startSession() {
 
 async function startCamera() {
   try {
-    if(camStream) return;
-    camStream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user'}, audio:false });
+    // Kalau stream sudah ada dan video sudah playing, skip
+    if(camStream && videoEl.srcObject && !videoEl.paused) return;
+
+    // Stop stream lama kalau ada
+    if(camStream) {
+      camStream.getTracks().forEach(t => t.stop());
+      camStream = null;
+    }
+
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:'user', width:{ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+
     videoEl.srcObject = camStream;
+
+    // Tunggu video benar-benar siap sebelum play
+    await new Promise((resolve, reject) => {
+      videoEl.onloadedmetadata = () => resolve();
+      videoEl.onerror = (e) => reject(e);
+      setTimeout(resolve, 3000); // fallback timeout
+    });
+
+    try { await videoEl.play(); } catch(e) { /* autoplay mungkin sudah berjalan */ }
+
   } catch(e) {
-    showAlert('Kamera tidak bisa dibuka. Pastikan izin kamera di browser sudah aktif.', {icon:'warn'});
+    console.error('Camera error:', e);
+    if(e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'){
+      showAlert('Izin kamera ditolak. Klik ikon kunci/kamera di address bar browser dan izinkan akses kamera.', {icon:'warn'});
+    } else if(e.name === 'NotFoundError'){
+      showAlert('Kamera tidak ditemukan. Pastikan kamera terhubung dan tidak dipakai aplikasi lain.', {icon:'warn'});
+    } else {
+      showAlert('Kamera tidak bisa dibuka: ' + e.message, {icon:'warn'});
+    }
   }
 }
 
 function stopCamera() {
-  if(!camStream) return;
-  camStream.getTracks().forEach(t=>t.stop());
-  camStream = null;
+  if(camStream) {
+    camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+  }
   videoEl.srcObject = null;
+  videoEl.load(); // reset video element
 }
 
 function updateShotBadge(){
@@ -564,11 +597,16 @@ function updateShotBadge(){
 
 function startCountdown() {
   if(isShooting) return;
-  if(!videoEl.srcObject) {
-    startCamera();
-    showAlert('Kamera sedang diaktifkan. Tekan foto lagi setelah kamera muncul.', {icon:'info'});
+
+  // Cek kamera benar-benar aktif dan punya stream video
+  const videoReady = videoEl.srcObject && videoEl.readyState >= 2;
+  if(!videoReady) {
+    startCamera().then(() => {
+      showAlert('Kamera sedang diaktifkan. Tekan tombol foto lagi setelah kamera muncul.', {icon:'info'});
+    });
     return;
   }
+
   capturedImgs = [];
   capturedImg = null;
   currentShot = 0;
