@@ -542,41 +542,28 @@ function startSession() {
 }
 
 async function startCamera() {
+  // Kalau stream sudah aktif, tidak perlu buka ulang
+  if(camStream && videoEl.srcObject) return;
+
+  // Bersihkan stream lama kalau ada
+  stopCamera();
+
   try {
-    // Kalau stream sudah ada dan video sudah playing, skip
-    if(camStream && videoEl.srcObject && !videoEl.paused) return;
-
-    // Stop stream lama kalau ada
-    if(camStream) {
-      camStream.getTracks().forEach(t => t.stop());
-      camStream = null;
-    }
-
+    // Minta stream kamera — browser akan tampilkan popup izin jika belum
     camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:'user', width:{ideal:1280}, height:{ideal:720} },
+      video: { facingMode:'user' },
       audio: false
     });
-
+    // Langsung assign ke video, browser yang handle autoplay
     videoEl.srcObject = camStream;
-
-    // Tunggu video benar-benar siap sebelum play
-    await new Promise((resolve, reject) => {
-      videoEl.onloadedmetadata = () => resolve();
-      videoEl.onerror = (e) => reject(e);
-      setTimeout(resolve, 3000); // fallback timeout
-    });
-
-    try { await videoEl.play(); } catch(e) { /* autoplay mungkin sudah berjalan */ }
-
   } catch(e) {
-    console.error('Camera error:', e);
-    if(e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'){
-      showAlert('Izin kamera ditolak. Klik ikon kunci/kamera di address bar browser dan izinkan akses kamera.', {icon:'warn'});
-    } else if(e.name === 'NotFoundError'){
-      showAlert('Kamera tidak ditemukan. Pastikan kamera terhubung dan tidak dipakai aplikasi lain.', {icon:'warn'});
-    } else {
-      showAlert('Kamera tidak bisa dibuka: ' + e.message, {icon:'warn'});
-    }
+    camStream = null;
+    const msg =
+      e.name === 'NotAllowedError'  ? 'Izin kamera ditolak. Klik ikon kunci di address bar lalu izinkan akses kamera, kemudian refresh halaman.' :
+      e.name === 'NotFoundError'    ? 'Kamera tidak ditemukan. Pastikan kamera terhubung dan tidak dipakai aplikasi lain.' :
+      e.name === 'NotReadableError' ? 'Kamera sedang dipakai aplikasi lain (Zoom, Meet, OBS, dll). Tutup aplikasi tersebut lalu coba lagi.' :
+      'Kamera tidak bisa dibuka: ' + e.message;
+    showAlert(msg, {icon:'warn'});
   }
 }
 
@@ -598,11 +585,9 @@ function updateShotBadge(){
 function startCountdown() {
   if(isShooting) return;
 
-  // Cek kamera benar-benar aktif dan punya stream video
-  const videoReady = videoEl.srcObject && videoEl.readyState >= 2;
-  if(!videoReady) {
+  if(!videoEl.srcObject) {
     startCamera().then(() => {
-      showAlert('Kamera sedang diaktifkan. Tekan tombol foto lagi setelah kamera muncul.', {icon:'info'});
+      showAlert('Kamera sedang diaktifkan. Tekan tombol foto lagi setelah gambar kamera muncul.', {icon:'info'});
     });
     return;
   }
